@@ -1,0 +1,13 @@
+name: Security
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  push:
+  pull_request:
+    types: [opened]
+
+jobs:
+  quality:
+    uses: pmartu12/github-actions-reusable/.github/workflows/[symfony]security-check.yml@main
+    secrets: inherit

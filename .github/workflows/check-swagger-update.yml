@@ -1,0 +1,11 @@
+name: Check if swagger is updated
+
+on:
+  push:
+  pull_request:
+    types: [opened]
+
+jobs:
+  check-swagger-update:
+    uses: pmartu12/github-actions-reusable/.github/workflows/[symfony]check-swagger-update.yml@main
+    secrets: inherit

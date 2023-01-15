@@ -1,0 +1,11 @@
+name: Quality
+
+on:
+  push:
+  pull_request:
+    types: [opened]
+
+jobs:
+  quality:
+    uses: pmartu12/github-actions-reusable/.github/workflows/[symfony]quality.yml@main
+    secrets: inherit

@@ -7,6 +7,7 @@ docker_exec := docker-compose exec
 php_container := php-fpm
 phpstan_container := phpstan
 phpcs_container := phpcs
+node_container := node
 compose	:= $(docker) --file docker-compose.yml --file docker-compose.override.yml
 node_container := nodejs
 args = $(filter-out $@,$(MAKECMDGOALS))
@@ -17,23 +18,27 @@ start: ## Start all project containers
 .PHONY: start
 
 stop: ## Stop the project containers
-	$(compose) stop $(s)
+	$(compose) --profile quality  stop $(s)
 .PHONY: stop
 
 build: ## Build project images
-	$(compose) build
+	$(compose) build --no-cache
 .PHONY: build
 
 up: ## Spin up project containers
 	$(compose) up -d --remove-orphans
 .PHONY: up
 
+up-quality: ## Spin up project containers with quality profile
+	$(compose) --profile quality up -d --remove-orphans
+.PHONY: up-quality
+
 enter: ## Enter the PHP container in bash mode
 	$(docker_exec) $(php_container) zsh
 .PHONY: enter
 
 erase: ## Erase containers with related volumes
-	$(compose) down -v
+	$(compose) --profile quality down -v
 .PHONY: erase
 
 prepare: hooks ## Prepare the dev environment
@@ -174,14 +179,6 @@ security-check:
 	$(docker_exec) $(php_container) symfony security:check
 .PHONY: security-check
 
-arkitect: ## Run arkitect check
-	@if [ "$$CI" != "" ] || ([ -d /proc ] && ([ "$$(grep docker /proc/1/cgroup)" != "" ] || [ "$$(grep kubepods /proc/1/cgroup)" != "" ])); then \
-		./phparkitect.phar check; \
-	else \
-		$(docker_exec) $(php_container) ./vendor/bin/phparkitect check ; \
-	fi
-.PHONY: arkitect
-
 testsuite: export APP_ENV = test
 testsuite: export APP_DEBUG = 1
 testsuite:
@@ -190,6 +187,10 @@ testsuite:
     bin/phpunit $(RUN_ARGS) ; \
     bin/phpunit $(RUN_ARGS) ;
 .PHONY: testsuite
+
+apidoc: ## Create apidoc-swagger file for website (ADD YOUR COLLECTION_ID)
+	$(docker_exec) $(node_container) apidoc collection.generate --out=docapi/static/swagger
+.PHONY: apidoc
 
 .PHONY: help
 help: ## Show available commands list

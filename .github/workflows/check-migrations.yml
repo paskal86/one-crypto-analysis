@@ -1,0 +1,11 @@
+name: Check Migrations
+
+on:
+  push:
+  pull_request:
+    types: [opened]
+
+jobs:
+  check-migrations:
+    uses: pmartu12/github-actions-reusable/.github/workflows/[symfony]check-migrations.yml@main
+    secrets: inherit

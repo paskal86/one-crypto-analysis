@@ -1,0 +1,11 @@
+name: Nameing convention
+
+on:
+  push:
+  pull_request:
+    types: [opened]
+
+jobs:
+  naming-convention:
+    uses: pmartu12/github-actions-reusable/.github/workflows/[common]naming-convention.yml@main
+    secrets: inherit

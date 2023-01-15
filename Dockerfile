@@ -1,70 +1,127 @@
 ARG DOCKER_REGISTRY=docker.io
-ARG PHP_VERSION=8.1
+ARG PHP_VERSION=8.1.13
+ARG ALPINE_VERSION=3.17
 
-FROM ${DOCKER_REGISTRY}/bitnami/php-fpm:${PHP_VERSION}-prod AS php_prod
-ARG COMPOSER_VERSION=2.3.10
-ENV PHP_INI_DIR="/opt/bitnami/php/etc" APP_ENV=prod APP_DEBUG=0 SERVER_ENV=prod
+FROM ${DOCKER_REGISTRY}/php:${PHP_VERSION}-fpm-alpine${ALPINE_VERSION} AS php_base
+
+ARG APCU_VERSION=5.1.22
+ENV APP_ENV=prod APP_DEBUG=0 SERVER_ENV=prod
 
 USER root
 
 WORKDIR /app
 
-COPY . .
-RUN set -eux \
-  && apt-get update && apt-get install -y --no-install-recommends \
-  && install_packages autoconf make libpq5 libfcgi0ldbl libfcgi-bin unzip libpq-dev g++ git libjpeg-dev libpng-dev libtiff-dev libgif-dev libzstd-dev \
-  && yes 'yes' | pecl install -f igbinary redis \
-  && mv "$PHP_INI_DIR/php.ini-production" "$PHP_INI_DIR/php.ini" \
-  && cp .build/*.ini $PHP_INI_DIR/conf.d/ \
-  && rm -f $PHP_INI_DIR/php-fpm.d/* \
-  && cp .build/php-fpm.conf $PHP_INI_DIR/php-fpm.conf \
-  && cp .build/www.conf $PHP_INI_DIR/php-fpm.d/ \
-  && echo "extension=pgsql.so" >> $PHP_INI_DIR/conf.d/pgsql.ini \
-  && echo "extension=pdo_pgsql.so" >> $PHP_INI_DIR/conf.d/pgsql.ini \
-  && echo "opcache.revalidate_freq = 0" >> $PHP_INI_DIR/conf.d/php_opcache.ini \
-  && echo "zend.assertions = -1" >> $PHP_INI_DIR/conf.d/php_opcache.ini \
-  && echo "assert.exception = 0" >> $PHP_INI_DIR/conf.d/php_opcache.ini \
-  && echo "opcache.preload = /app/config/preload.php" >> $PHP_INI_DIR/conf.d/php_opcache.ini \
-  && echo "opcache.preload_user = www-data" >> $PHP_INI_DIR/conf.d/php_opcache.ini \
-  && mkdir -p var/cache var/log \
-  && composer self-update ${COMPOSER_VERSION} \
+RUN apk add --no-cache \
+		autoconf \
+        fcgi \
+		git \
+		g++ \
+        icu-dev \
+		make \
+        libpq-dev \
+        icu-dev \
+        icu-data-full \
+	;
+
+RUN set -eux; \
+	pecl install \
+		apcu-${APCU_VERSION} \
+        redis \
+        igbinary \
+	; \
+	pecl clear-cache; \
+    docker-php-ext-configure intl \
+    ; \
+    docker-php-ext-install \
+        bcmath \
+        intl \
+        pdo \
+        pdo_pgsql \
+        pgsql \
+    ;
+
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+ENV COMPOSER_ALLOW_SUPERUSER=1
+
+FROM php_base AS php_prod
+ARG GITHUB_TOKEN
+
+WORKDIR /app
+
+RUN addgroup -g 3000 -S php && adduser -u 1000 -S php -G php
+
+# This layer is only re-built when dependences files are updated
+COPY composer.json composer.lock symfony.lock ./
+RUN set -eux; \
+  composer config --global --auth github-oauth.github.com $GITHUB_TOKEN \
   && composer install --prefer-dist --no-dev --no-autoloader --no-scripts --no-progress --no-ansi \
   && composer clear-cache --no-ansi \
+  && rm -f /root/.composer/auth.json
+
+# copy only specifically what we need
+COPY .env ./
+COPY bin bin/
+COPY config config/
+COPY migrations migrations/
+COPY public public/
+COPY src src/
+COPY template[s] templates/
+COPY .build .build/
+
+RUN  cp .build/*.ini $PHP_INI_DIR/conf.d/ \
+  && mv $PHP_INI_DIR/php.ini-production $PHP_INI_DIR/php.ini \
+  && rm -f $PHP_INI_DIR/php-fpm.d/* \
+  && cp .build/php-fpm.conf $PHP_INI_DIR/php-fpm.conf \
+  && cp .build/www.conf /usr/local/etc/php-fpm.d/www.conf \
+  && mkdir -p var/cache var/log \
   && composer dump-autoload --optimize --classmap-authoritative --no-dev \
   && composer dump-env prod \
   && composer run-script --no-dev --no-ansi post-install-cmd \
   && chmod +x bin/console \
   && bin/console cache:clear --no-warmup && bin/console cache:warmup \
   && composer clear-cache --no-ansi \
-  && chown -R www-data:www-data /app/var \
+  && chown -R php:php /app/var \
   && sync
 
-USER www-data
-CMD ["php-fpm", "-F", "--pid", "/tmp/php-fpm.pid", "-y", "/opt/bitnami/php/etc/php-fpm.conf"]
+USER php
+CMD ["php-fpm", "-F", "--pid", "/tmp/php-fpm.pid", "-y", "/usr/local/etc/php-fpm.conf"]
 
-FROM php_prod AS php_dev
+FROM php_base AS php_dev
 
-ENV PHP_INI_DIR="/opt/bitnami/php/etc" APP_ENV=dev APP_DEBUG=1 SERVER_ENV=dev
-ARG INFECTION_VERSION=0.26.8
+ENV APP_ENV=dev APP_DEBUG=1 SERVER_ENV=dev GOOGLE_APPLICATION_CREDENTIALS="/tmp/application_default_credentials.json"
+ARG INFECTION_VERSION=0.26.16
 
 USER root
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    && install_packages bash ncurses-bin zsh \
+WORKDIR /app
+
+COPY . .
+
+RUN apk add --no-cache \
+		bash \
+		zsh \
+		make \
+        libpq-dev \
+	;
+
+RUN	pecl install \
+		pcov \
+        xdebug-3.1.2 \
+	;
+
+RUN cp .build/*.ini $PHP_INI_DIR/conf.d/ \
     && rm -rf "$PHP_INI_DIR/conf.d/php_custom.ini" \
     && rm -rf "$PHP_INI_DIR/conf.d/php_opcache.ini" \
     && echo "zend.assertions = 1" >> $PHP_INI_DIR/conf.d/php_opcache.ini \
     && echo "assert.exception = 1" >> $PHP_INI_DIR/conf.d/php_opcache.ini \
-    && pecl install pcov \
-    && echo "extension=pcov.so" >> $PHP_INI_DIR/conf.d/pcov.ini \
-    && pecl install xdebug-3.1.2
+    && echo "extension=pcov.so" >> $PHP_INI_DIR/conf.d/pcov.ini ;
 
 RUN wget https://github.com/infection/infection/releases/download/${INFECTION_VERSION}/infection.phar \
     && chmod +x infection.phar \
     && mv infection.phar /usr/local/bin/infection
 
 ENV XDEBUG_CONF_FILE=$PHP_INI_DIR/conf.d/docker-php-ext-xdebug.ini
-COPY --chown=www-data:www-data .docker/php/xdebug.ini $XDEBUG_CONF_FILE
+COPY --chown=php:php .docker/php/xdebug.ini $XDEBUG_CONF_FILE
 COPY .docker/php/xdebug-starter.sh /usr/local/bin/xdebug-starter
 
 RUN sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" \
@@ -72,11 +129,10 @@ RUN sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master
     && sed -i -E "s/^plugins=\((.*)\)$/plugins=(\1 git git-flow zsh-autosuggestions)/" /root/.zshrc \
     && echo "export ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE=\"fg=#0cb074\"" >> /root/.zshrc
 
-
 COPY .docker/php/shell-aliases.rc /tmp/shell-aliases.rc
 RUN cat /tmp/shell-aliases.rc >> /root/.bashrc \
     && cat /tmp/shell-aliases.rc >> ~/.zshrc
 
-RUN echo 'deb [trusted=yes] https://repo.symfony.com/apt/ /' | tee /etc/apt/sources.list.d/symfony-cli.list \
-    && apt update \
-    && apt install symfony-cli
+RUN apk add --no-cache bash \
+    && curl -1sLf 'https://dl.cloudsmith.io/public/symfony/stable/setup.alpine.sh' | distro=alpine version=3.8.0 bash \
+    && apk add symfony-cli

@@ -1,0 +1,14 @@
+on:
+  create:
+
+name: Build, push Docker images to Google Artifact Registry
+
+jobs:
+  call-workflow-build-push:
+    uses: pmartu12/github-actions-reusable/.github/workflows/[common]build-push.yaml@main
+    with:
+      repository_address:
+      image:
+      assets: false
+      target: php_prod
+    secrets: inherit
